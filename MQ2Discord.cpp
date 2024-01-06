@@ -13,12 +13,12 @@ PreSetup("MQ2Discord");
 PLUGIN_VERSION(1.1);
 
 // MQ2Main isn't nice enough to export this
-unsigned int __stdcall MQ2DataVariableLookup(char * VarName, char * Value, size_t ValueLen)
+unsigned int __stdcall MQ2DataVariableLookup(char* VarName, char* Value, size_t ValueLen)
 {
 	strcpy_s(Value, ValueLen, VarName);
 	if (!pLocalPlayer)
 		return (uint32_t)strlen(Value);
-	return (uint32_t)strlen(ParseMacroParameter((PSPAWNINFO)pLocalPlayer, Value, ValueLen));
+	return static_cast<unsigned int>(strlen(ParseMacroParameter(Value, ValueLen)));
 }
 
 VOID DiscordCmd(PSPAWNINFO pChar, PCHAR szLine);
