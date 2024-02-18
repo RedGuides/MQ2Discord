@@ -36,7 +36,7 @@ DWORD mainThreadId;
 void OutputMessage(const char * prepend, const char * format, va_list args)
 {
 	char output[MAX_STRING];
-	strcpy_s(output, prepend);
+	strncpy_s(output, prepend, MAX_STRING - 1);
 	vsprintf_s(&output[strlen(output)], sizeof(output) - strlen(output) - 1, format, args);
 
 	// If we're on the main thread write direct, otherwise queue it
@@ -93,7 +93,7 @@ void ProcessMessage(std::string Message)
 	if (client && !disabled && GetGameState() == GAMESTATE_INGAME)
 	{
 		char myMessage[MAX_STRING] = { 0 };
-		strcpy_s(myMessage, Message.c_str());
+		strncpy_s(myMessage, Message.c_str(), MAX_STRING - 1);
 		// Should be okay to modify the message since it's a copy.
 		StripTextLinks(myMessage);
 		// Resize the string to match the first null terminator.
@@ -105,7 +105,7 @@ void ProcessMessage(std::string Message)
 std::string ParseMacroDataString(const std::string& input)
 {
 	char buffer[MAX_STRING] = { 0 };
-	strcpy_s(buffer, input.c_str());
+	strncpy_s(buffer, input.c_str(), MAX_STRING - 1);
 	ParseMacroData(buffer, MAX_STRING);
 	return buffer;
 }
