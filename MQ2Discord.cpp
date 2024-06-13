@@ -437,7 +437,37 @@ PLUGIN_API void SetGameState(int GameState)
 	{
 		if (client)
 		{
-			client->enqueueAll("Disconnecting, no longer in game");
+			std::string message = "Disconnecting, no longer in game. GameState is ";
+			switch(GameState)
+			{
+				case GAMESTATE_PRECHARSELECT:
+					message += "PRECHARSELECT";
+					break;
+				case GAMESTATE_CHARSELECT:
+					message += "CHARSELECT";
+					break;
+				case GAMESTATE_CHARCREATE:
+					message += "CHARCREATE";
+					break;
+				case GAMESTATE_POSTCHARSELECT:
+					message += "POSTCHARSELECT";
+					break;
+				case GAMESTATE_SOMETHING:
+					message += "SOMETHING";
+					break;
+				case GAMESTATE_INGAME:
+					message += "INGAME";
+					break;
+				case GAMESTATE_LOGGINGIN:
+					message += "LOGGINGIN";
+					break;
+				case GAMESTATE_UNLOADING:
+					message += "UNLOADING";
+					break;
+				default:
+					message += std::to_string(GameState);
+			}
+			client->enqueueAll(message);
 			client.reset();
 		}
 	}
