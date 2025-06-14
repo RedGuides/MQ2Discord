@@ -108,7 +108,7 @@ uint32_t __stdcall MQ2DataVariableLookup(char* VarName, char* Value, size_t Valu
 	if (!pLocalPlayer)
 		return (uint32_t)strlen(Value);
 
-	return (uint32_t)strlen(ParseMacroParameter(pLocalPlayer, Value, ValueLen));
+	return (uint32_t)strlen(ParseMacroParameter(Value, ValueLen));
 }
 
 void OutputMessage(const char* prepend, const char* format, va_list args)
