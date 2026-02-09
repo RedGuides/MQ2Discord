@@ -9,6 +9,7 @@
 #include <mutex>
 #include <queue>
 
+#include <algorithm>
 #pragma warning(push)
 #pragma warning(disable: 4267)
 #include <sleepy_discord\sleepy_discord.h>

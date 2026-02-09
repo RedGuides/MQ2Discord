@@ -18,7 +18,7 @@ unsigned int __stdcall MQ2DataVariableLookup(char * VarName, char * Value, size_
 	strcpy_s(Value, ValueLen, VarName);
 	if (!pLocalPlayer)
 		return (uint32_t)strlen(Value);
-	return (uint32_t)strlen(ParseMacroParameter((PSPAWNINFO)pLocalPlayer, Value, ValueLen));
+	return (uint32_t)strlen(ParseMacroParameter(Value, ValueLen));
 }
 
 VOID DiscordCmd(PSPAWNINFO pChar, PCHAR szLine);
