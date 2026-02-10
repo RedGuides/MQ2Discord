@@ -40,3 +40,38 @@ characters:
       send_connected: false
       allow_commands: true
       show_command_response: 1000
+
+# Optional sections for more advanced routing
+servers: {}
+classes: {}
+
+groups:
+  - name: YourGroup
+    characters:
+      - rizlona_Notgonnaknightly
+      - server_OtherCharInGroup
+      - server_OneMore
+    channels:
+      - name: Deaths
+        id: '12345678901231351'
+        allowed:
+          - You have been slain by
+        blocked: []
+        notify: []
+        prefix: "[${Me.Name}]"
+        send_connected: true
+        allow_commands: false
+        show_command_response: 0
+
+all:
+  - name: TellsChannel
+    id: '12345678901231351'
+    allowed:
+      - tells you
+    blocked:
+      - "|${Me.Pet.DisplayName}| tells you#*#"
+    notify: []
+    prefix: "[${EverQuest.Server}_${Me.Name}]"
+    send_connected: true
+    allow_commands: false
+    show_command_response: 0
