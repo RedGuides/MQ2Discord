@@ -113,7 +113,7 @@ namespace YAML {
 			if (node["servers"])
 				rhs.servers = node["servers"].as<std::map<std::string, std::vector<ChannelConfig>>>();
 			if (node["classes"])
-				rhs.servers = node["classes"].as<std::map<std::string, std::vector<ChannelConfig>>>();
+				rhs.classes = node["classes"].as<std::map<std::string, std::vector<ChannelConfig>>>();
 			if (node["groups"])
 				rhs.groups = node["groups"].as<std::vector<GroupConfig>>();
 			if (node["all"])

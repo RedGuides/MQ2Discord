@@ -13,12 +13,12 @@ PreSetup("MQ2Discord");
 PLUGIN_VERSION(1.1);
 
 // MQ2Main isn't nice enough to export this
-unsigned int __stdcall MQ2DataVariableLookup(char * VarName, char * Value, size_t ValueLen)
+unsigned int __stdcall MQ2DataVariableLookup(char* VarName, char* Value, size_t ValueLen)
 {
 	strcpy_s(Value, ValueLen, VarName);
 	if (!pLocalPlayer)
 		return (uint32_t)strlen(Value);
-	return (uint32_t)strlen(ParseMacroParameter(Value, ValueLen));
+	return static_cast<unsigned int>(strlen(ParseMacroParameter(Value, ValueLen)));
 }
 
 VOID DiscordCmd(PSPAWNINFO pChar, PCHAR szLine);
@@ -36,7 +36,7 @@ DWORD mainThreadId;
 void OutputMessage(const char * prepend, const char * format, va_list args)
 {
 	char output[MAX_STRING];
-	strcpy_s(output, prepend);
+	strncpy_s(output, prepend, MAX_STRING - 1);
 	vsprintf_s(&output[strlen(output)], sizeof(output) - strlen(output) - 1, format, args);
 
 	// If we're on the main thread write direct, otherwise queue it
@@ -93,7 +93,7 @@ void ProcessMessage(std::string Message)
 	if (client && !disabled && GetGameState() == GAMESTATE_INGAME)
 	{
 		char myMessage[MAX_STRING] = { 0 };
-		strcpy_s(myMessage, Message.c_str());
+		strncpy_s(myMessage, Message.c_str(), MAX_STRING - 1);
 		// Should be okay to modify the message since it's a copy.
 		StripTextLinks(myMessage);
 		// Resize the string to match the first null terminator.
@@ -105,7 +105,7 @@ void ProcessMessage(std::string Message)
 std::string ParseMacroDataString(const std::string& input)
 {
 	char buffer[MAX_STRING] = { 0 };
-	strcpy_s(buffer, input.c_str());
+	strncpy_s(buffer, input.c_str(), MAX_STRING - 1);
 	ParseMacroData(buffer, MAX_STRING);
 	return buffer;
 }
@@ -437,7 +437,37 @@ PLUGIN_API void SetGameState(int GameState)
 	{
 		if (client)
 		{
-			client->enqueueAll("Disconnecting, no longer in game");
+			std::string message = "Disconnecting, no longer in game. GameState is ";
+			switch(GameState)
+			{
+				case GAMESTATE_PRECHARSELECT:
+					message += "PRECHARSELECT";
+					break;
+				case GAMESTATE_CHARSELECT:
+					message += "CHARSELECT";
+					break;
+				case GAMESTATE_CHARCREATE:
+					message += "CHARCREATE";
+					break;
+				case GAMESTATE_POSTCHARSELECT:
+					message += "POSTCHARSELECT";
+					break;
+				case GAMESTATE_SOMETHING:
+					message += "SOMETHING";
+					break;
+				case GAMESTATE_INGAME:
+					message += "INGAME";
+					break;
+				case GAMESTATE_LOGGINGIN:
+					message += "LOGGINGIN";
+					break;
+				case GAMESTATE_UNLOADING:
+					message += "UNLOADING";
+					break;
+				default:
+					message += std::to_string(GameState);
+			}
+			client->enqueueAll(message);
 			client.reset();
 		}
 	}
