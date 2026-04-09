@@ -1,4 +1,4 @@
 asio
 sleepy-discord
 yaml-cpp
-curl-84[non-http,ssl,schannel]
+curl[non-http,ssl]

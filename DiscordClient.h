@@ -446,7 +446,7 @@ namespace MQ2Discord
 			try
 			{
 				CallbackDiscordClient client(_token, [this](auto&& PH1) { onMessageReceived(std::forward<decltype(PH1)>(PH1)); });
-				client.setIntents(SleepyDiscord::Intent::SERVER_MESSAGES);
+				client.setIntents(SleepyDiscord::Intent::SERVER_MESSAGES | SleepyDiscord::Intent::MESSAGE_CONTENT);
 
 				auto clientAsync = std::async(std::launch::async, [&]() {
 					client.run();
@@ -465,7 +465,7 @@ namespace MQ2Discord
 						// Every minute, send typing, to keep connection alive. Crude timer based on 1s sleep below
 						try
 						{
-							if (++count % 60 == 0 && !client.isRateLimited())
+							if (++count % 60 == 0)
 							{
 								client.updateStatus();
 								for (const auto& channel : _channels)
