@@ -501,7 +501,7 @@ namespace MQ2Discord
 							{
 								try
 								{
-									const std::string messageResponse = client.sendMessage(kvp.first, kvp.second).text;
+									const std::string messageResponse = client.sendMessage(kvp.first, kvp.second, SleepyDiscord::Sync).text;
 									_writeDebug(messageResponse.c_str());
 									if (messageResponse.empty())
 									{
