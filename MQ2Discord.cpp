@@ -27,6 +27,10 @@ void Reload();
 std::unique_ptr<MQ2Discord::DiscordClient> client;
 bool disabled = false;
 bool debug = false;
+std::atomic<bool> reloadRequested{ false };
+
+// The server_character  the current client was built for.
+std::string builtForCharacter;
 std::queue<std::string> commands;
 std::mutex commandsMutex;
 std::queue<std::string> messages;
@@ -110,11 +114,25 @@ std::string ParseMacroDataString(const std::string& input)
 	return buffer;
 }
 
+std::string CurrentServerCharacter()
+{
+	if (pLocalPlayer && GetServerShortName()[0] != '\0')
+		return std::string(GetServerShortName()) + "_" + pLocalPlayer->Name;
+
+	return "";
+}
+
 void OnCommand(std::string command)
 {
 	OutputDebug("OnCommand: %s", command.c_str());
 	std::lock_guard<std::mutex> _lock(commandsMutex);
 	commands.emplace(command);
+}
+
+// We can't tear down the client from within its own thread, so just flag it and let OnPulse handle it
+void RequestReload()
+{
+	reloadRequested = true;
 }
 
 void SetDefaults(DiscordConfig& config)
@@ -238,6 +256,7 @@ void Reload()
 {
 	if (client)
 		client.reset();
+	builtForCharacter.clear();
 
 	DiscordConfig config;
 	try
@@ -267,8 +286,7 @@ void Reload()
 	//const std::string server_character = server + "_" + GetCharInfo()->Name;
 	//const std::string classShortName = pEverQuest->GetClassThreeLetterCode(((PSPAWNINFO)pCharSpawn)->mActorClient.Class);
 
-	const std::string server = ParseMacroDataString("${EverQuest.Server}");
-	const std::string server_character = server + "_" + ParseMacroDataString("${Me.Name}");
+	const std::string server_character = CurrentServerCharacter();
 	const std::string classShortName = ParseMacroDataString("${Me.Class.ShortName}");
 
 	std::vector<ChannelConfig> channels;
@@ -322,7 +340,9 @@ void Reload()
 				filter = "#*#" + filter + "#*#";
 	}
 
-	client = std::make_unique<MQ2Discord::DiscordClient>(config.token, config.user_ids, channels, OnCommand, ParseMacroDataString, OutputError, OutputWarning, OutputNormal, OutputDebug);
+	reloadRequested = false;
+	client = std::make_unique<MQ2Discord::DiscordClient>(config.token, config.user_ids, channels, OnCommand, RequestReload, ParseMacroDataString, OutputError, OutputWarning, OutputNormal, OutputDebug);
+	builtForCharacter = server_character;
 }
 
 void DiscordCmd(PSPAWNINFO pChar, PCHAR szLine)
@@ -387,6 +407,13 @@ PLUGIN_API void ShutdownPlugin()
 
 PLUGIN_API void OnPulse()
 {
+	// Rebuild the client if the background thread flagged a dead receive path.
+	if (GetGameState() == GAMESTATE_INGAME && reloadRequested.exchange(false))
+	{
+		OutputNormal("Discord receive path stalled, reconnecting...");
+		Reload();
+	}
+
 	// Execute any queued commands
 	while (true)
 	{
@@ -431,44 +458,19 @@ PLUGIN_API void SetGameState(int GameState)
 {
 	if (GameState == GAMESTATE_INGAME)
 	{
-		Reload();
+		// No need to reload if we have a client built for the current character
+		if (client == nullptr || builtForCharacter != CurrentServerCharacter())
+		{
+			Reload();
+		}
 	}
-	else
+	else if (GameState == GAMESTATE_CHARSELECT || GameState == GAMESTATE_PRECHARSELECT)
 	{
 		if (client)
 		{
-			std::string message = "Disconnecting, no longer in game. GameState is ";
-			switch(GameState)
-			{
-				case GAMESTATE_PRECHARSELECT:
-					message += "PRECHARSELECT";
-					break;
-				case GAMESTATE_CHARSELECT:
-					message += "CHARSELECT";
-					break;
-				case GAMESTATE_CHARCREATE:
-					message += "CHARCREATE";
-					break;
-				case GAMESTATE_POSTCHARSELECT:
-					message += "POSTCHARSELECT";
-					break;
-				case GAMESTATE_SOMETHING:
-					message += "SOMETHING";
-					break;
-				case GAMESTATE_INGAME:
-					message += "INGAME";
-					break;
-				case GAMESTATE_LOGGINGIN:
-					message += "LOGGINGIN";
-					break;
-				case GAMESTATE_UNLOADING:
-					message += "UNLOADING";
-					break;
-				default:
-					message += std::to_string(GameState);
-			}
-			client->enqueueAll(message);
+			client->enqueueAll("Disconnecting, no longer in game");
 			client.reset();
+			builtForCharacter.clear();
 		}
 	}
 }

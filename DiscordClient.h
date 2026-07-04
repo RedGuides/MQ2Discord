@@ -8,6 +8,8 @@
 #include <vector>
 #include <mutex>
 #include <queue>
+#include <chrono>
+#include <cstdint>
 
 #include <algorithm>
 #pragma warning(push)
@@ -37,13 +39,14 @@ namespace MQ2Discord
 			std::vector<std::string> userIds,
 			std::vector<ChannelConfig> channels,
 			std::function<void(std::string command)> executeCommand,
+			std::function<void()> requestReload,
 			std::function<std::string(std::string input)> parseMacroData,
 			void(*writeError)(const char * format, ...),
 			void(*writeWarning)(const char * format, ...),
 			void(*writeNormal)(const char * format, ...),
 			void(*writeDebug)(const char * format, ...))
 			: _token(std::move(token)), _userIds(std::move(userIds)), _channels(std::move(channels)), _parseMacroData(std::move(parseMacroData)),
-			_executeCommand(std::move(executeCommand)), _writeError(writeError), _writeWarning(writeWarning), _writeNormal(writeNormal), _writeDebug(writeDebug), _stop(false),
+			_executeCommand(std::move(executeCommand)), _requestReload(std::move(requestReload)), _writeError(writeError), _writeWarning(writeWarning), _writeNormal(writeNormal), _writeDebug(writeDebug), _stop(false),
 			_blech('#', '|', MQ2DataVariableLookup)
 		{
 			// Add events to the parser and store the id/channel in the appropriate map
@@ -141,6 +144,9 @@ namespace MQ2Discord
 		/// Function to execute an ingame command. Must be threadsafe as it won't be invoked from the main thread
 		const std::function<void(std::string command)> _executeCommand;
 
+		/// Function to request a full plugin reload (rebuild of this client) on the main thread. Threadsafe.
+		const std::function<void()> _requestReload;
+
 		/// Function to write an error message to ingame chat. Must be threadsafe
 		void(*const _writeError)(const char * format, ...);
 
@@ -228,15 +234,53 @@ namespace MQ2Discord
 				: SleepyDiscord::DiscordClient(token, SleepyDiscord::USER_CONTROLED_THREADS),
 				_callback(std::move(callback))
 			{
+				_lastActivityMs.store(steadyNowMs());
 			}
 
 			void onMessage(SleepyDiscord::Message message) override
 			{
+				// Any inbound gateway dispatch means the receive path is alive
+				markActivity();
 				if (_callback)
 					_callback(message);
 			}
+
+			// Heartbeat ACKs should arrive roughly every 40s while the gateway is healthy
+			void onHeartbeatAck() override
+			{
+				markActivity();
+			}
+
+			// Steady-clock milliseconds of the last received gateway activity. Threadsafe.
+			int64_t lastGatewayActivityMs() const
+			{
+				return _lastActivityMs.load();
+			}
+
+			// True once any gateway activity has been seen (the receive path has worked at least once)
+			bool everConnected() const
+			{
+				return _everConnected.load();
+			}
+
+			static int64_t steadyNowMs()
+			{
+				return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+			}
+
 		private:
+			void markActivity()
+			{
+				_everConnected.store(true);
+				_lastActivityMs.store(steadyNowMs());
+			}
+
 			std::function<void(SleepyDiscord::Message &)> _callback;
+
+			std::atomic<int64_t> _lastActivityMs{ 0 };
+
+			// Set the first time any gateway activity is received.
+			std::atomic<bool> _everConnected{ false };
 		};
 
 		void onMessageReceived(SleepyDiscord::Message& message)
@@ -452,86 +496,105 @@ namespace MQ2Discord
 					client.run();
 				});
 
-				// Give the client time to connect
-				//std::this_thread::sleep_for(std::chrono::milliseconds(2000));
-				//if (client.isReady())
+				_writeNormal("Connecting to Discord...");
+
+				// 120000 == ~3 missed heartbeats
+				const int64_t gatewayTimeoutMs = 120000;
+				bool recoveryRequested = false;
+
+				const int64_t connectWarnMs = 30000;
+				const int64_t threadStartMs = CallbackDiscordClient::steadyNowMs();
+				bool reportedConnected = false;
+				bool reportedConnectFailure = false;
+				while (!_stop)
 				{
-					_writeNormal("Ready");
+					_stopped = false;
 
-					int count = 0;
-					while (!_stop)
+					if (client.isReady())
 					{
-						_stopped = false;
-						// Every minute, send typing, to keep connection alive. Crude timer based on 1s sleep below
-						try
+						if (!reportedConnected)
 						{
-							if (++count % 60 == 0)
-							{
-								client.updateStatus();
-								for (const auto& channel : _channels)
-									client.sendTyping(channel.id);
-							}
+							_writeNormal("Connected to Discord");
+							reportedConnected = true;
 						}
-						// This is not so critical that it should shut things down if it doesn't work
-						catch (...)	{ }
+					}
+					else if (!reportedConnected && !reportedConnectFailure && CallbackDiscordClient::steadyNowMs() - threadStartMs > connectWarnMs)
+					{
+						_writeError("Could not connect to Discord after %llds - still retrying. Check the bot token and that the Message Content Intent is enabled.", static_cast<long long>((CallbackDiscordClient::steadyNowMs() - threadStartMs) / 1000));
+						reportedConnectFailure = true;
+					}
 
-						// grab all queued messages, put them into a map of channel -> combined message
-						std::map<std::string, std::string> combinedMessages;
+					if (!recoveryRequested && client.everConnected() && !client.isQuiting())
+					{
+						const int64_t idleMs = CallbackDiscordClient::steadyNowMs() - client.lastGatewayActivityMs();
+						if (idleMs > gatewayTimeoutMs)
+						{
+							// Recover via a full reload on the main thread
+							_writeWarning("No Discord gateway activity for %llds, reconnecting", static_cast<long long>(idleMs / 1000));
+							if (_requestReload)
+								_requestReload();
+							recoveryRequested = true;
+						}
+					}
+
+					// grab all queued messages, put them into a map of channel -> combined message
+					std::map<std::string, std::string> combinedMessages;
+					while (true)
+					{
+						std::tuple<std::string, std::string> message;
+						{
+							std::lock_guard<std::mutex> lock(_messagesMutex);
+							if (_messages.empty())
+								break;
+							message = _messages.front();
+							_messages.pop();
+						}
+						//combinedMessages[std::get<0>(message)] += escape_json(std::get<1>(message) + "\n");
+						combinedMessages[std::get<0>(message)] += std::get<1>(message) + '\n';
+
+						// If the message is too long, send what we currently have and grab the rest the next go through
+						if (combinedMessages[std::get<0>(message)].length() > 1800)
+							break;
+					}
+
+					for (const auto& kvp : combinedMessages)
+					{
 						while (true)
 						{
-							std::tuple<std::string, std::string> message;
+							try
 							{
-								std::lock_guard<std::mutex> lock(_messagesMutex);
-								if (_messages.empty())
-									break;
-								message = _messages.front();
-								_messages.pop();
-							}
-							//combinedMessages[std::get<0>(message)] += escape_json(std::get<1>(message) + "\n");
-							combinedMessages[std::get<0>(message)] += std::get<1>(message) + '\n';
-
-							// If the message is too long, send what we currently have and grab the rest the next go through
-							if (combinedMessages[std::get<0>(message)].length() > 1800)
+								const std::string messageResponse = client.sendMessage(kvp.first, kvp.second, SleepyDiscord::Sync).text;
+								_writeDebug(messageResponse.c_str());
+								if (messageResponse.empty())
+								{
+									_writeError("Failed to send discord message to: %s", kvp.first.c_str());
+								}
 								break;
-						}
-
-						for (const auto& kvp : combinedMessages)
-						{
-							while (true)
+							}
+							catch (SleepyDiscord::ErrorCode& e)
 							{
-								try
+								// If we're rate limited, back off a bit and try again shortly. Otherwise, bail out
+								if (e == SleepyDiscord::TOO_MANY_REQUESTS || e == SleepyDiscord::RATE_LIMITED)
+									std::this_thread::sleep_for(std::chrono::milliseconds(200));
+								else
 								{
-									const std::string messageResponse = client.sendMessage(kvp.first, kvp.second, SleepyDiscord::Sync).text;
-									_writeDebug(messageResponse.c_str());
-									if (messageResponse.empty())
-									{
-										_writeError("Failed to send discord message to: %s", kvp.first.c_str());
-									}
+									_writeError("\ar%s\aw - %s", errorString(e).c_str(), errorDesc(e).c_str());
 									break;
-								}
-								catch (SleepyDiscord::ErrorCode& e)
-								{
-									// If we're rate limited, back off a bit and try again shortly. Otherwise, bail out
-									if (e == SleepyDiscord::TOO_MANY_REQUESTS || e == SleepyDiscord::RATE_LIMITED)
-										std::this_thread::sleep_for(std::chrono::milliseconds(200));
-									else
-									{
-										_writeError("\ar%s\aw - %s", errorString(e).c_str(), errorDesc(e).c_str());
-										break;
-									}
 								}
 							}
 						}
-
-						std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 					}
-					_writeNormal("Disconnecting...");
+
+					std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 				}
-				/*else
-				{
-					_writeError("Could not connect to Discord.");
-				}*/
+				_writeNormal("Disconnecting...");
+
 				client.quit();
+				clientAsync.wait();
+				client.ioContext->restart();
+				// Timeout after 2 seconds so a hung stop doesn't hang us permanently
+				client.ioContext->run_for(std::chrono::seconds(2));
+
 				_stopped = true;
 			}
 			catch (std::exception& e)
